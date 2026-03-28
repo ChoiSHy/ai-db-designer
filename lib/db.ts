@@ -2,9 +2,20 @@ import { Pool } from "pg";
 import { ChatMessage, SchemaJSON } from "./types";
 
 // ── 커넥션 풀 ─────────────────────────────────────────────────
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+// DATABASE_URL이 있으면 우선 사용, 없으면 개별 환경 변수로 구성
+const schema = process.env.DB_SCHEMA ?? "public";
+
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL }
+    : {
+        host:     process.env.DB_HOST     ?? "localhost",
+        port:     Number(process.env.DB_PORT ?? 5432),
+        user:     process.env.DB_USER     ?? "postgres",
+        password: process.env.DB_PASSWORD ?? "",
+        database: process.env.DB_NAME     ?? "db_designer",
+      }
+);
 
 // 테이블 초기화는 최초 1회만 실행
 let initPromise: Promise<void> | null = null;
@@ -22,6 +33,9 @@ async function q(text: string, values?: unknown[]) {
 // ── 테이블 초기화 ────────────────────────────────────────────
 export async function initDB(): Promise<void> {
   await pool.query(`
+    CREATE SCHEMA IF NOT EXISTS "${schema}";
+    SET search_path TO "${schema}";
+
     CREATE TABLE IF NOT EXISTS users (
       username   TEXT PRIMARY KEY,
       created_at TIMESTAMPTZ DEFAULT NOW()

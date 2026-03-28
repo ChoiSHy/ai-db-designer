@@ -25,7 +25,9 @@
       "Bash(mkdir -p \"/c/Users/HOME/Desktop/2026/db_designer/app/api/projects/[id]/schema\")",
       "Bash(mkdir -p \"/c/Users/HOME/Desktop/2026/db_designer/app/api/projects/[id]/undo\")",
       "Bash(npm uninstall:*)",
-      "Bash(ls /c/Users/HOME/Desktop/2026/db_designer/next.config*)"
+      "Bash(ls /c/Users/HOME/Desktop/2026/db_designer/next.config*)",
+      "Bash(/c/Users/HOME/Desktop/2026/db_designer/.env.example:*)",
+      "Bash(git check-ignore:*)"
     ]
   }
 }
