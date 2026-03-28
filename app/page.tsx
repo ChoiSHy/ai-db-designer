@@ -13,7 +13,7 @@ export default function Home() {
   const {
     messages, schema, lastDiff, canUndo, undoCount,
     isLoading, error, hydrated,
-    sendMessage, uploadDocument, undoSchema, resetAll,
+    sendMessage, uploadDocument, parseDDL, undoSchema, resetAll,
   } = useSchemaChat(settings);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -79,6 +79,8 @@ export default function Home() {
             canUndo={canUndo}
             undoCount={undoCount}
             onUndo={undoSchema}
+            onParseDDL={parseDDL}
+            isLoading={isLoading}
           />
         </div>
       </main>

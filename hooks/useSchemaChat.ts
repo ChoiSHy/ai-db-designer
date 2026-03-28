@@ -206,6 +206,54 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
     setLastDiff(null);
   }, [schemaHistory]);
 
+  // ── DDL → 스키마 파싱 ───────────────────────────────────
+  const parseDDL = useCallback(
+    async (ddl: string) => {
+      if (isLoading) return;
+      setIsLoading(true);
+      setError(null);
+
+      const prevSchema = schema;
+
+      try {
+        const res = await fetch("/api/parse-ddl", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ddl,
+            schema,
+            provider: providerSettings.provider,
+            apiKey:   providerSettings.apiKey,
+            model:    providerSettings.model,
+          }),
+        });
+
+        const errData = !res.ok ? await res.json() : null;
+
+        if (res.status === 401) {
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`,
+          }]);
+          return;
+        }
+
+        if (!res.ok) {
+          throw new Error(errData?.error || "DDL 파싱에 실패했습니다.");
+        }
+
+        const data = await res.json();
+        applyAIResponse(data, prevSchema, messages);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+        setError(message);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [schema, messages, isLoading, providerSettings, applyAIResponse]
+  );
+
   // ── 전체 초기화 ──────────────────────────────────────────
   const resetAll = useCallback(() => {
     setMessages([]);
@@ -229,6 +277,7 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
     hydrated,
     sendMessage,
     uploadDocument,
+    parseDDL,
     undoSchema,
     resetAll,
   };
