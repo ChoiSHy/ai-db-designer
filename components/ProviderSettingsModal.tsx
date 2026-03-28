@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { PROVIDERS, ProviderSettings, Provider, getProvider } from "@/lib/providers";
 
 interface Props {
@@ -15,16 +15,6 @@ export function ProviderSettingsModal({ open, initialSettings, onSave, onClose }
   const [model,    setModel]    = useState(initialSettings.model);
   const [apiKey,   setApiKey]   = useState(initialSettings.apiKey);
   const [showKey,  setShowKey]  = useState(false);
-
-  // 모달 열릴 때 초기값으로 리셋
-  useEffect(() => {
-    if (open) {
-      setProvider(initialSettings.provider);
-      setModel(initialSettings.model);
-      setApiKey(initialSettings.apiKey);
-      setShowKey(false);
-    }
-  }, [open, initialSettings]);
 
   // provider 변경 시 첫 번째 모델로 자동 전환
   const handleProviderChange = (p: Provider) => {
