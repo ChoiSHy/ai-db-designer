@@ -146,9 +146,9 @@ export function ProviderSettingsModal({ open, initialSettings, onSave, onClose }
                   비어있으면 서버의 <code className="font-mono bg-amber-50 px-1 rounded">ANTHROPIC_API_KEY</code> 환경변수를 사용합니다
                 </p>
               ) : (
-                <p className="text-[11px] text-red-500 flex items-center gap-1">
+                <p className="text-[11px] text-amber-600 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 bg-red-400 rounded-full inline-block" />
-                  API 키를 입력해야 합니다
+                  비어있으면 서버의 <code className="font-mono bg-amber-50 px-1 rounded">OPENAI_API_KEY</code> 환경변수를 사용합니다
                 </p>
               )}
             </div>

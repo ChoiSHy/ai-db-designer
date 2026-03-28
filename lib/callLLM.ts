@@ -8,7 +8,7 @@ export interface LLMMessage {
 
 export interface LLMRequest {
   provider: Provider;
-  /** 빈 문자열이면 Anthropic의 경우 ANTHROPIC_API_KEY 환경변수 사용 */
+  /** 빈 문자열이면 환경변수(ANTHROPIC_API_KEY / OPENAI_API_KEY) 사용 */
   apiKey: string;
   model: string;
   systemPrompt: string;
@@ -48,13 +48,18 @@ export async function callLLM(req: LLMRequest): Promise<string> {
       if (err instanceof Anthropic.AuthenticationError) {
         throw new LLMAuthError("Anthropic API 키가 유효하지 않습니다. 설정(⚙️)에서 API 키를 확인해주세요.");
       }
+      // API 키에 비ASCII 문자가 포함된 경우 fetch 헤더 직렬화 실패
+      if (err instanceof TypeError && err.message.includes("ByteString")) {
+        throw new LLMAuthError("API 키가 올바르지 않습니다. 설정(⚙️)에서 유효한 API 키를 입력해주세요.");
+      }
       throw err;
     }
   }
 
   // ── OpenAI ───────────────────────────────────────────────
   if (req.provider === "openai") {
-    if (!req.apiKey) throw new LLMAuthError("OpenAI API 키가 없습니다. 설정(⚙️)에서 API 키를 입력해주세요.");
+    const key =  req.apiKey || process.env.OPENAI_API_KEY
+    if (!key) throw new LLMAuthError("OpenAI API 키가 없습니다. 설정(⚙️)에서 입력하거나 .env.local에 OPENAI_API_KEY를 설정하세요.");
 
     const messages = [
       { role: "system", content: req.systemPrompt },
@@ -65,7 +70,7 @@ export async function callLLM(req: LLMRequest): Promise<string> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${req.apiKey}`,
+        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({ model: req.model, messages, max_tokens: maxTokens }),
     });

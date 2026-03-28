@@ -4,7 +4,7 @@
     {
       "name": "db_designer",
       "runtimeExecutable": "C:\\node.exe",
-      "runtimeArgs": ["C:\\Users\\HOME\\AppData\\Roaming\\npm\\node_modules\\npm\\bin\\npm-cli.js", "run", "dev"],
+      "runtimeArgs": ["C:\\Users\\HOME\\Desktop\\2026\\db_designer\\node_modules\\next\\dist\\bin\\next", "dev"],
       "port": 3000,
       "autoPort": true
     }

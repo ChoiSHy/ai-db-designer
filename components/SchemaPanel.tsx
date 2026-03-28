@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { SchemaJSON, Table, Column } from "@/lib/types";
 import { generateDDL, DB_TARGETS, DbTarget } from "@/lib/generateDDL";
@@ -12,6 +12,8 @@ import {
   TableDiffStatus,
   ColumnDiffStatus,
 } from "@/lib/schemaDiff";
+import { validateSchema } from "@/lib/validateSchema";
+import { ValidationView } from "./ValidationView";
 
 // ERDView는 React Flow 포함 → SSR 제외, 클라이언트 전용 로드
 const ERDView = dynamic(
@@ -219,7 +221,7 @@ function DiffBanner({ diff, onUndo }: { diff: SchemaDiff; onUndo: () => void }) 
 }
 
 // ─── 메인 컴포넌트 ────────────────────────────────────────────
-type ViewMode = "erd" | "table" | "json" | "ddl";
+type ViewMode = "erd" | "table" | "json" | "ddl" | "validate";
 
 export function SchemaPanel({
   schema,
@@ -232,14 +234,17 @@ export function SchemaPanel({
   const [copied,   setCopied]   = useState(false);
   const [dbTarget, setDbTarget] = useState<DbTarget>("mysql");
 
-  const isEmpty   = schema.tables.length === 0;
-  const showDiff  = lastDiff !== null && hasDiff(lastDiff);
+  const isEmpty      = schema.tables.length === 0;
+  const showDiff     = lastDiff !== null && hasDiff(lastDiff);
+  const validation   = useMemo(() => validateSchema(schema), [schema]);
+  const issueCount   = validation.errorCount + validation.warningCount;
 
-  const tabs: { id: ViewMode; label: string }[] = [
-    { id: "erd",   label: "ERD"   },
-    { id: "table", label: "테이블" },
-    { id: "json",  label: "JSON"  },
-    { id: "ddl",   label: "DDL"   },
+  const tabs: { id: ViewMode; label: string; badge?: number }[] = [
+    { id: "erd",      label: "ERD"   },
+    { id: "table",    label: "테이블" },
+    { id: "json",     label: "JSON"  },
+    { id: "ddl",      label: "DDL"   },
+    { id: "validate", label: "검증", badge: issueCount },
   ];
 
   function handleCopyDDL() {
@@ -296,13 +301,20 @@ export function SchemaPanel({
               <button
                 key={tab.id}
                 onClick={() => setViewMode(tab.id)}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`relative px-3 py-1 rounded-md text-xs font-medium transition-colors ${
                   viewMode === tab.id
                     ? "bg-white text-gray-800 shadow-sm"
                     : "text-gray-500 hover:text-gray-700"
                 }`}
               >
                 {tab.label}
+                {tab.badge != null && tab.badge > 0 && (
+                  <span className={`absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 flex items-center justify-center text-[9px] font-bold rounded-full ${
+                    validation.errorCount > 0 ? "bg-red-500 text-white" : "bg-amber-400 text-white"
+                  }`}>
+                    {tab.badge}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -349,6 +361,9 @@ export function SchemaPanel({
             {JSON.stringify(schema, null, 2)}
           </pre>
         </div>
+
+      ) : viewMode === "validate" ? (
+        <ValidationView schema={schema} />
 
       ) : (
         /* DDL 뷰 */
