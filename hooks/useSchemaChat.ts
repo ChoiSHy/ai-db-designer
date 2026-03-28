@@ -9,77 +9,99 @@ const ACCEPTED_FILE_TYPES = [".pdf", ".docx", ".txt", ".md"] as const;
 export { ACCEPTED_FILE_TYPES };
 
 const EMPTY_SCHEMA: SchemaJSON = { tables: [] };
-const LS_MESSAGES_KEY = "db-designer:messages";
-const LS_SCHEMA_KEY   = "db-designer:schema";
-const LS_HISTORY_KEY  = "db-designer:schema-history";
-const MAX_HISTORY = 20;
 
-function loadJSON<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
+export function useSchemaChat(
+  projectId: string | null,
+  providerSettings: ProviderSettings = DEFAULT_PROVIDER_SETTINGS
+) {
+  const [messages,      setMessages]      = useState<ChatMessage[]>([]);
+  const [schema,        setSchema]        = useState<SchemaJSON>(EMPTY_SCHEMA);
+  const [historyCount,  setHistoryCount]  = useState(0);
+  const [lastDiff,      setLastDiff]      = useState<SchemaDiff | null>(null);
+  const [isLoading,     setIsLoading]     = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const [hydrated,      setHydrated]      = useState(false);
 
-export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVIDER_SETTINGS) {
-  const [messages,       setMessages]       = useState<ChatMessage[]>([]);
-  const [schema,         setSchema]         = useState<SchemaJSON>(EMPTY_SCHEMA);
-  const [schemaHistory,  setSchemaHistory]  = useState<SchemaJSON[]>([]);
-  const [lastDiff,       setLastDiff]       = useState<SchemaDiff | null>(null);
-  const [isLoading,      setIsLoading]      = useState(false);
-  const [error,          setError]          = useState<string | null>(null);
-  const [hydrated,       setHydrated]       = useState(false);
-
-  // ── 마운트 시 localStorage 복원 ──────────────────────────
+  // ── 프로젝트 데이터 로드 ─────────────────────────────────
   useEffect(() => {
-    setMessages(loadJSON<ChatMessage[]>(LS_MESSAGES_KEY, []));
-    setSchema(loadJSON<SchemaJSON>(LS_SCHEMA_KEY, EMPTY_SCHEMA));
-    setSchemaHistory(loadJSON<SchemaJSON[]>(LS_HISTORY_KEY, []));
-    setHydrated(true);
-  }, []);
+    if (!projectId) {
+      setMessages([]);
+      setSchema(EMPTY_SCHEMA);
+      setHistoryCount(0);
+      setLastDiff(null);
+      setHydrated(true);
+      return;
+    }
 
-  // ── localStorage 자동 저장 ───────────────────────────────
-  useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(LS_MESSAGES_KEY, JSON.stringify(messages));
-  }, [messages, hydrated]);
+    setHydrated(false);
+    setLastDiff(null);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(LS_SCHEMA_KEY, JSON.stringify(schema));
-  }, [schema, hydrated]);
+    fetch(`/api/projects/${projectId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setMessages(data.messages ?? []);
+        setSchema(data.project?.schema_json ?? EMPTY_SCHEMA);
+        setHistoryCount((data.schemaHistory ?? []).length);
+      })
+      .catch(() => {
+        setMessages([]);
+        setSchema(EMPTY_SCHEMA);
+        setHistoryCount(0);
+      })
+      .finally(() => setHydrated(true));
+  }, [projectId]);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(schemaHistory));
-  }, [schemaHistory, hydrated]);
-
-  // ── 공통: AI 응답 처리 ──────────────────────────────────
+  // ── 공통: AI 응답 처리 (assistant 메시지만 추가 — user는 이미 추가됨) ──
   const applyAIResponse = useCallback(
-    (data: { message?: string; schema?: SchemaJSON }, prevSchema: SchemaJSON, rollbackMessages: ChatMessage[]) => {
+    (
+      data: { message?: string; schema?: SchemaJSON },
+      prevSchema: SchemaJSON,
+      userContent: string,
+      assistantContent: string
+    ) => {
+      setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
+
       if (data.schema?.tables) {
-        const newSchema: SchemaJSON = data.schema;
+        const newSchema = data.schema;
         const diff = computeSchemaDiff(prevSchema, newSchema);
+        setSchema(newSchema);
         if (hasDiff(diff)) {
-          setSchemaHistory((prev) => [prevSchema, ...prev].slice(0, MAX_HISTORY));
           setLastDiff(diff);
+          setHistoryCount((c) => c + 1);
         } else {
           setLastDiff(null);
         }
-        setSchema(newSchema);
+
+        // DB 저장 — fire-and-forget (UI 블로킹 없음)
+        if (projectId) {
+          Promise.all([
+            fetch(`/api/projects/${projectId}/messages`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ role: "assistant", content: assistantContent }),
+            }),
+            fetch(`/api/projects/${projectId}/schema`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                schema: newSchema,
+                prevSchema: hasDiff(diff) ? prevSchema : undefined,
+              }),
+            }),
+          ]).catch(() => {});
+        }
       } else {
         setLastDiff(null);
+        if (projectId) {
+          fetch(`/api/projects/${projectId}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role: "assistant", content: assistantContent }),
+          }).catch(() => {});
+        }
       }
-
-      const assistantMessage: ChatMessage = {
-        role: "assistant",
-        content: data.message || "",
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
     },
-    []
+    [projectId]
   );
 
   // ── 메시지 전송 ──────────────────────────────────────────
@@ -87,13 +109,21 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
     async (userInput: string) => {
       if (!userInput.trim() || isLoading) return;
 
-      const userMessage: ChatMessage = { role: "user", content: userInput };
-      const updatedMessages = [...messages, userMessage];
-      setMessages(updatedMessages);
+      // 유저 메시지 즉시 표시
+      setMessages((prev) => [...prev, { role: "user", content: userInput }]);
       setIsLoading(true);
       setError(null);
 
       const prevSchema = schema;
+
+      // 유저 메시지 DB 저장 (fire-and-forget)
+      if (projectId) {
+        fetch(`/api/projects/${projectId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "user", content: userInput }),
+        }).catch(() => {});
+      }
 
       try {
         const res = await fetch("/api/chat", {
@@ -112,30 +142,27 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
         const errData = !res.ok ? await res.json() : null;
 
         if (res.status === 401) {
-          // 인증 오류 → 채팅 메시지 버블로 표시 (유저 메시지 유지)
-          setMessages((prev) => [...prev, {
-            role: "assistant",
-            content: `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`,
-          }]);
+          const errMsg = `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`;
+          setMessages((prev) => [...prev,
+            { role: "user", content: userInput },
+            { role: "assistant", content: errMsg },
+          ]);
           return;
         }
 
-        if (!res.ok) {
-          throw new Error(errData?.error || "요청에 실패했습니다.");
-        }
+        if (!res.ok) throw new Error(errData?.error || "요청에 실패했습니다.");
 
         const data = await res.json();
-        applyAIResponse(data, prevSchema, messages);
+        applyAIResponse(data, prevSchema, userInput, data.message ?? "");
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
-        setError(message);
-        setMessages(messages);
+        setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.");
+        // 유저 메시지 롤백
+        setMessages((prev) => prev.slice(0, -1));
       } finally {
         setIsLoading(false);
       }
     },
-    [messages, schema, isLoading, applyAIResponse]
+    [messages, schema, isLoading, providerSettings, projectId, applyAIResponse]
   );
 
   // ── 문서 업로드 ──────────────────────────────────────────
@@ -143,16 +170,25 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
     async (file: File, context?: string) => {
       if (isLoading) return;
 
-      const label = context?.trim()
+      const userLabel = context?.trim()
         ? `📄 ${file.name}\n${context.trim()}`
         : `📄 ${file.name} 문서를 분석해서 DB 스키마를 만들어줘.`;
-      const userMessage: ChatMessage = { role: "user", content: label };
-      const prevMessages = messages;
-      setMessages((prev) => [...prev, userMessage]);
+
+      // 유저 메시지 즉시 표시
+      setMessages((prev) => [...prev, { role: "user", content: userLabel }]);
       setIsLoading(true);
       setError(null);
 
       const prevSchema = schema;
+
+      // 유저 메시지 DB 저장 (fire-and-forget)
+      if (projectId) {
+        fetch(`/api/projects/${projectId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "user", content: userLabel }),
+        }).catch(() => {});
+      }
 
       try {
         const formData = new FormData();
@@ -163,57 +199,41 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
         formData.append("model",    providerSettings.model);
         if (context?.trim()) formData.append("context", context.trim());
 
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
-
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
         const errData = !res.ok ? await res.json() : null;
 
         if (res.status === 401) {
-          // 인증 오류 → 채팅 메시지 버블로 표시 (유저 메시지 유지)
-          setMessages((prev) => [...prev, {
-            role: "assistant",
-            content: `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`,
-          }]);
+          const errMsg = `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`;
+          setMessages((prev) => [...prev,
+            { role: "user", content: userLabel },
+            { role: "assistant", content: errMsg },
+          ]);
           return;
         }
 
-        if (!res.ok) {
-          throw new Error(errData?.error || "요청에 실패했습니다.");
-        }
+        if (!res.ok) throw new Error(errData?.error || "요청에 실패했습니다.");
 
         const data = await res.json();
-        applyAIResponse(data, prevSchema, prevMessages);
+        await applyAIResponse(data, prevSchema, userLabel, data.message ?? "");
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
-        setError(message);
-        setMessages(prevMessages);
+        setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.");
+        // 유저 메시지 롤백
+        setMessages((prev) => prev.slice(0, -1));
       } finally {
         setIsLoading(false);
       }
     },
-    [messages, schema, isLoading, applyAIResponse]
+    [schema, isLoading, providerSettings, projectId, applyAIResponse]
   );
 
-  // ── 실행 취소 ────────────────────────────────────────────
-  const undoSchema = useCallback(() => {
-    if (schemaHistory.length === 0) return;
-    const [prev, ...rest] = schemaHistory;
-    setSchema(prev);
-    setSchemaHistory(rest);
-    setLastDiff(null);
-  }, [schemaHistory]);
-
-  // ── DDL → 스키마 파싱 ───────────────────────────────────
+  // ── DDL 파싱 ─────────────────────────────────────────────
   const parseDDL = useCallback(
     async (ddl: string) => {
       if (isLoading) return;
-      setIsLoading(true);
-      setError(null);
 
       const prevSchema = schema;
+      setIsLoading(true);
+      setError(null);
 
       try {
         const res = await fetch("/api/parse-ddl", {
@@ -238,40 +258,82 @@ export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVI
           return;
         }
 
-        if (!res.ok) {
-          throw new Error(errData?.error || "DDL 파싱에 실패했습니다.");
-        }
+        if (!res.ok) throw new Error(errData?.error || "DDL 파싱에 실패했습니다.");
 
         const data = await res.json();
-        applyAIResponse(data, prevSchema, messages);
+        // DDL 파싱은 채팅 메시지 없이 스키마만 업데이트
+        if (data.schema?.tables) {
+          const newSchema = data.schema;
+          const diff = computeSchemaDiff(prevSchema, newSchema);
+          setSchema(newSchema);
+          if (hasDiff(diff)) {
+            setLastDiff(diff);
+            setHistoryCount((c) => c + 1);
+          } else {
+            setLastDiff(null);
+          }
+          if (projectId) {
+            fetch(`/api/projects/${projectId}/schema`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                schema: newSchema,
+                prevSchema: hasDiff(diff) ? prevSchema : undefined,
+              }),
+            }).catch(() => {});
+          }
+        }
+        if (data.message) {
+          setMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
-        setError(message);
+        setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.");
       } finally {
         setIsLoading(false);
       }
     },
-    [schema, messages, isLoading, providerSettings, applyAIResponse]
+    [schema, isLoading, providerSettings, projectId]
   );
 
-  // ── 전체 초기화 ──────────────────────────────────────────
-  const resetAll = useCallback(() => {
+  // ── 실행 취소 ────────────────────────────────────────────
+  const undoSchema = useCallback(async () => {
+    if (historyCount === 0 || !projectId) return;
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/undo`, { method: "POST" });
+      if (!res.ok) return;
+      const { schema: restoredSchema } = await res.json();
+      setSchema(restoredSchema);
+      setHistoryCount((c) => Math.max(0, c - 1));
+      setLastDiff(null);
+    } catch {
+      // 실패 시 무시
+    }
+  }, [projectId, historyCount]);
+
+  // ── 프로젝트 초기화 ──────────────────────────────────────
+  const resetAll = useCallback(async () => {
+    if (!projectId) return;
+
+    try {
+      await fetch(`/api/projects/${projectId}/schema`, { method: "DELETE" });
+    } catch {
+      // 실패 시 무시
+    }
+
     setMessages([]);
     setSchema(EMPTY_SCHEMA);
-    setSchemaHistory([]);
+    setHistoryCount(0);
     setLastDiff(null);
     setError(null);
-    localStorage.removeItem(LS_MESSAGES_KEY);
-    localStorage.removeItem(LS_SCHEMA_KEY);
-    localStorage.removeItem(LS_HISTORY_KEY);
-  }, []);
+  }, [projectId]);
 
   return {
     messages,
     schema,
     lastDiff,
-    canUndo: schemaHistory.length > 0,
-    undoCount: schemaHistory.length,
+    canUndo: historyCount > 0,
+    undoCount: historyCount,
     isLoading,
     error,
     hydrated,

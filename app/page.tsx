@@ -1,24 +1,138 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ChatPanel } from "@/components/ChatPanel";
 import { SchemaPanel } from "@/components/SchemaPanel";
 import { ProviderSettingsModal } from "@/components/ProviderSettingsModal";
+import { LoginModal } from "@/components/LoginModal";
+import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { useSchemaChat } from "@/hooks/useSchemaChat";
 import { useProviderSettings } from "@/hooks/useProviderSettings";
 import { getProvider, getModel } from "@/lib/providers";
+import { Project } from "@/lib/db";
+
+const LS_USERNAME_KEY = "db-designer:username";
 
 export default function Home() {
   const { settings, updateSettings, hydrated: settingsHydrated } = useProviderSettings();
+
+  const [username,          setUsername]          = useState<string | null>(null);
+  const [projects,          setProjects]          = useState<Project[]>([]);
+  const [currentProjectId,  setCurrentProjectId]  = useState<string | null>(null);
+  const [authHydrated,      setAuthHydrated]      = useState(false);
+  const [settingsOpen,      setSettingsOpen]      = useState(false);
+
   const {
     messages, schema, lastDiff, canUndo, undoCount,
     isLoading, error, hydrated,
     sendMessage, uploadDocument, parseDDL, undoSchema, resetAll,
-  } = useSchemaChat(settings);
+  } = useSchemaChat(currentProjectId, settings);
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // ── 초기화: localStorage에서 username 복원 ──────────────
+  useEffect(() => {
+    const saved = localStorage.getItem(LS_USERNAME_KEY);
+    if (saved) setUsername(saved);
+    setAuthHydrated(true);
+  }, []);
 
-  if (!hydrated || !settingsHydrated) {
+  // ── username 설정 시 프로젝트 목록 로드 ──────────────────
+  useEffect(() => {
+    if (!username) return;
+    loadProjects(username);
+  }, [username]);
+
+  const loadProjects = useCallback(async (user: string) => {
+    try {
+      const res = await fetch(`/api/projects?username=${encodeURIComponent(user)}`);
+      const data = await res.json();
+      const list: Project[] = data.projects ?? [];
+      setProjects(list);
+
+      // 프로젝트 없으면 자동 생성
+      if (list.length === 0) {
+        const created = await createProject(user, "새 프로젝트");
+        if (created) setCurrentProjectId(created.id);
+      } else {
+        setCurrentProjectId(list[0].id);
+      }
+    } catch {
+      // 네트워크 오류 등 무시
+    }
+  }, []);
+
+  async function createProject(user: string, name: string): Promise<Project | null> {
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: user, name }),
+      });
+      const data = await res.json();
+      const project: Project = data.project;
+      setProjects((prev) => [project, ...prev]);
+      return project;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── 로그인 완료 ──────────────────────────────────────────
+  function handleLogin(user: string) {
+    setUsername(user);
+  }
+
+  // ── 로그아웃 ─────────────────────────────────────────────
+  function handleLogout() {
+    localStorage.removeItem(LS_USERNAME_KEY);
+    setUsername(null);
+    setProjects([]);
+    setCurrentProjectId(null);
+  }
+
+  // ── 새 프로젝트 ──────────────────────────────────────────
+  async function handleCreateProject() {
+    if (!username) return;
+    const project = await createProject(username, "새 프로젝트");
+    if (project) setCurrentProjectId(project.id);
+  }
+
+  // ── 프로젝트 삭제 ────────────────────────────────────────
+  async function handleDeleteProject(id: string) {
+    try {
+      await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      const newList = projects.filter((p) => p.id !== id);
+      setProjects(newList);
+      if (currentProjectId === id) {
+        if (newList.length > 0) {
+          setCurrentProjectId(newList[0].id);
+        } else if (username) {
+          const project = await createProject(username, "새 프로젝트");
+          if (project) setCurrentProjectId(project.id);
+        }
+      }
+    } catch {
+      // 무시
+    }
+  }
+
+  // ── 프로젝트 이름 변경 ───────────────────────────────────
+  async function handleRenameProject(id: string, name: string) {
+    try {
+      await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      setProjects((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, name } : p))
+      );
+    } catch {
+      // 무시
+    }
+  }
+
+  // ── 로딩 상태 ────────────────────────────────────────────
+  if (!authHydrated || !settingsHydrated) {
     return (
       <div className="flex items-center justify-center bg-gray-50 text-gray-400 text-sm" style={{ height: "calc(100vh - 48px)" }}>
         불러오는 중...
@@ -31,6 +145,9 @@ export default function Home() {
 
   return (
     <div className="flex flex-col bg-gray-50" style={{ height: "calc(100vh - 48px)" }}>
+      {/* 로그인 모달 */}
+      {!username && <LoginModal onLogin={handleLogin} />}
+
       {/* 헤더 */}
       <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -60,19 +177,42 @@ export default function Home() {
         </button>
       </header>
 
-      {/* 메인: 좌측 채팅 + 우측 스키마 */}
+      {/* 메인 */}
       <main className="flex flex-1 min-h-0">
-        <div className="w-1/2 border-r border-gray-200 bg-white flex flex-col min-h-0">
-          <ChatPanel
-            messages={messages}
-            isLoading={isLoading}
-            error={error}
-            onSend={sendMessage}
-            onUpload={uploadDocument}
-            onReset={resetAll}
+        {/* 프로젝트 사이드바 */}
+        {username && (
+          <ProjectSidebar
+            username={username}
+            projects={projects}
+            currentProjectId={currentProjectId}
+            onSelectProject={setCurrentProjectId}
+            onCreateProject={handleCreateProject}
+            onDeleteProject={handleDeleteProject}
+            onRenameProject={handleRenameProject}
+            onLogout={handleLogout}
           />
+        )}
+
+        {/* 채팅 */}
+        <div className="flex-1 border-r border-gray-200 bg-white flex flex-col min-h-0 min-w-0">
+          {currentProjectId && hydrated ? (
+            <ChatPanel
+              messages={messages}
+              isLoading={isLoading}
+              error={error}
+              onSend={sendMessage}
+              onUpload={uploadDocument}
+              onReset={resetAll}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+              {username ? "프로젝트를 선택하세요" : ""}
+            </div>
+          )}
         </div>
-        <div className="w-1/2 bg-white flex flex-col min-h-0">
+
+        {/* 스키마 */}
+        <div className="flex-1 bg-white flex flex-col min-h-0 min-w-0">
           <SchemaPanel
             schema={schema}
             lastDiff={lastDiff}

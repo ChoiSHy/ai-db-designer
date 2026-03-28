@@ -20,7 +20,12 @@
       "Bash(npx next:*)",
       "Bash(Remove-Item -Force \"C:\\\\Users\\\\HOME\\\\Desktop\\\\2026\\\\db_designer\\\\.next\\\\dev\\\\lock\" -ErrorAction SilentlyContinue)",
       "Bash(npm install:*)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(mkdir -p \"/c/Users/HOME/Desktop/2026/db_designer/app/api/projects/[id]/messages\")",
+      "Bash(mkdir -p \"/c/Users/HOME/Desktop/2026/db_designer/app/api/projects/[id]/schema\")",
+      "Bash(mkdir -p \"/c/Users/HOME/Desktop/2026/db_designer/app/api/projects/[id]/undo\")",
+      "Bash(npm uninstall:*)",
+      "Bash(ls /c/Users/HOME/Desktop/2026/db_designer/next.config*)"
     ]
   }
 }
