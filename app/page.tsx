@@ -8,7 +8,7 @@ export default function Home() {
   const {
     messages, schema, lastDiff, canUndo, undoCount,
     isLoading, error, hydrated,
-    sendMessage, undoSchema, resetAll,
+    sendMessage, uploadDocument, undoSchema, resetAll,
   } = useSchemaChat();
 
   if (!hydrated) {
@@ -43,6 +43,7 @@ export default function Home() {
             isLoading={isLoading}
             error={error}
             onSend={sendMessage}
+            onUpload={uploadDocument}
             onReset={resetAll}
           />
         </div>

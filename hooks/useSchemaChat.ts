@@ -4,6 +4,9 @@ import { useState, useCallback, useEffect } from "react";
 import { ChatMessage, SchemaJSON } from "@/lib/types";
 import { SchemaDiff, computeSchemaDiff, hasDiff } from "@/lib/schemaDiff";
 
+const ACCEPTED_FILE_TYPES = [".pdf", ".docx", ".txt", ".md"] as const;
+export { ACCEPTED_FILE_TYPES };
+
 const EMPTY_SCHEMA: SchemaJSON = { tables: [] };
 const LS_MESSAGES_KEY = "db-designer:messages";
 const LS_SCHEMA_KEY   = "db-designer:schema";
@@ -52,6 +55,32 @@ export function useSchemaChat() {
     localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(schemaHistory));
   }, [schemaHistory, hydrated]);
 
+  // ── 공통: AI 응답 처리 ──────────────────────────────────
+  const applyAIResponse = useCallback(
+    (data: { message?: string; schema?: SchemaJSON }, prevSchema: SchemaJSON, rollbackMessages: ChatMessage[]) => {
+      if (data.schema?.tables) {
+        const newSchema: SchemaJSON = data.schema;
+        const diff = computeSchemaDiff(prevSchema, newSchema);
+        if (hasDiff(diff)) {
+          setSchemaHistory((prev) => [prevSchema, ...prev].slice(0, MAX_HISTORY));
+          setLastDiff(diff);
+        } else {
+          setLastDiff(null);
+        }
+        setSchema(newSchema);
+      } else {
+        setLastDiff(null);
+      }
+
+      const assistantMessage: ChatMessage = {
+        role: "assistant",
+        content: data.message || "",
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    },
+    []
+  );
+
   // ── 메시지 전송 ──────────────────────────────────────────
   const sendMessage = useCallback(
     async (userInput: string) => {
@@ -63,17 +92,13 @@ export function useSchemaChat() {
       setIsLoading(true);
       setError(null);
 
-      const prevSchema = schema; // 응답 후 비교를 위해 현재 스키마 캡처
+      const prevSchema = schema;
 
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userInput,
-            schema,
-            history: messages,
-          }),
+          body: JSON.stringify({ userInput, schema, history: messages }),
         });
 
         if (!res.ok) {
@@ -82,29 +107,7 @@ export function useSchemaChat() {
         }
 
         const data = await res.json();
-
-        if (data.schema?.tables) {
-          const newSchema: SchemaJSON = data.schema;
-
-          // 스키마가 실제로 변경된 경우에만 히스토리에 추가 & diff 계산
-          const diff = computeSchemaDiff(prevSchema, newSchema);
-          if (hasDiff(diff)) {
-            setSchemaHistory((prev) => [prevSchema, ...prev].slice(0, MAX_HISTORY));
-            setLastDiff(diff);
-          } else {
-            setLastDiff(null);
-          }
-
-          setSchema(newSchema);
-        } else {
-          setLastDiff(null);
-        }
-
-        const assistantMessage: ChatMessage = {
-          role: "assistant",
-          content: data.message || "",
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
+        applyAIResponse(data, prevSchema, messages);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
@@ -114,7 +117,53 @@ export function useSchemaChat() {
         setIsLoading(false);
       }
     },
-    [messages, schema, isLoading]
+    [messages, schema, isLoading, applyAIResponse]
+  );
+
+  // ── 문서 업로드 ──────────────────────────────────────────
+  const uploadDocument = useCallback(
+    async (file: File, context?: string) => {
+      if (isLoading) return;
+
+      const label = context?.trim()
+        ? `📄 ${file.name}\n${context.trim()}`
+        : `📄 ${file.name} 문서를 분석해서 DB 스키마를 만들어줘.`;
+      const userMessage: ChatMessage = { role: "user", content: label };
+      const prevMessages = messages;
+      setMessages((prev) => [...prev, userMessage]);
+      setIsLoading(true);
+      setError(null);
+
+      const prevSchema = schema;
+
+      try {
+        const formData = new FormData();
+        formData.append("file",   file);
+        formData.append("schema", JSON.stringify(schema));
+        if (context?.trim()) formData.append("context", context.trim());
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "요청에 실패했습니다.");
+        }
+
+        const data = await res.json();
+        applyAIResponse(data, prevSchema, prevMessages);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+        setError(message);
+        setMessages(prevMessages);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [messages, schema, isLoading, applyAIResponse]
   );
 
   // ── 실행 취소 ────────────────────────────────────────────
@@ -148,6 +197,7 @@ export function useSchemaChat() {
     error,
     hydrated,
     sendMessage,
+    uploadDocument,
     undoSchema,
     resetAll,
   };

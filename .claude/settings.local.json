@@ -9,7 +9,16 @@
       "Bash(where npm)",
       "Bash(npm run build)",
       "Bash(npm install pdf-parse mammoth)",
-      "Bash(npm install -D @types/pdf-parse)"
+      "Bash(npm install -D @types/pdf-parse)",
+      "Bash(node -e \"const p = require\\(''pdf-parse''\\); console.log\\(typeof p, Object.keys\\(p\\).slice\\(0,10\\)\\)\")",
+      "Bash(node -e \"const {PDFParse} = require\\(''pdf-parse''\\); console.log\\(typeof PDFParse\\)\")",
+      "Bash(node -e \"const {PDFParse} = require\\(''pdf-parse''\\); const p = new PDFParse\\(\\); console.log\\(Object.getOwnPropertyNames\\(Object.getPrototypeOf\\(p\\)\\)\\)\")",
+      "Bash(node -e \"const p = require\\(''''pdf-parse''''\\); console.log\\(JSON.stringify\\(Object.keys\\(p\\)\\)\\)\")",
+      "Bash(where node:*)",
+      "Bash(where node.exe)",
+      "Bash(timeout 15)",
+      "Bash(npx next:*)",
+      "Bash(Remove-Item -Force \"C:\\\\Users\\\\HOME\\\\Desktop\\\\2026\\\\db_designer\\\\.next\\\\dev\\\\lock\" -ErrorAction SilentlyContinue)"
     ]
   }
 }
