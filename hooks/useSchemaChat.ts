@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { ChatMessage, SchemaJSON } from "@/lib/types";
 import { SchemaDiff, computeSchemaDiff, hasDiff } from "@/lib/schemaDiff";
+import { ProviderSettings, DEFAULT_PROVIDER_SETTINGS } from "@/lib/providers";
 
 const ACCEPTED_FILE_TYPES = [".pdf", ".docx", ".txt", ".md"] as const;
 export { ACCEPTED_FILE_TYPES };
@@ -22,7 +23,7 @@ function loadJSON<T>(key: string, fallback: T): T {
   }
 }
 
-export function useSchemaChat() {
+export function useSchemaChat(providerSettings: ProviderSettings = DEFAULT_PROVIDER_SETTINGS) {
   const [messages,       setMessages]       = useState<ChatMessage[]>([]);
   const [schema,         setSchema]         = useState<SchemaJSON>(EMPTY_SCHEMA);
   const [schemaHistory,  setSchemaHistory]  = useState<SchemaJSON[]>([]);
@@ -98,12 +99,29 @@ export function useSchemaChat() {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userInput, schema, history: messages }),
+          body: JSON.stringify({
+            userInput,
+            schema,
+            history: messages,
+            provider: providerSettings.provider,
+            apiKey:   providerSettings.apiKey,
+            model:    providerSettings.model,
+          }),
         });
 
+        const errData = !res.ok ? await res.json() : null;
+
+        if (res.status === 401) {
+          // 인증 오류 → 채팅 메시지 버블로 표시 (유저 메시지 유지)
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`,
+          }]);
+          return;
+        }
+
         if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || "요청에 실패했습니다.");
+          throw new Error(errData?.error || "요청에 실패했습니다.");
         }
 
         const data = await res.json();
@@ -138,8 +156,11 @@ export function useSchemaChat() {
 
       try {
         const formData = new FormData();
-        formData.append("file",   file);
-        formData.append("schema", JSON.stringify(schema));
+        formData.append("file",     file);
+        formData.append("schema",   JSON.stringify(schema));
+        formData.append("provider", providerSettings.provider);
+        formData.append("apiKey",   providerSettings.apiKey);
+        formData.append("model",    providerSettings.model);
         if (context?.trim()) formData.append("context", context.trim());
 
         const res = await fetch("/api/upload", {
@@ -147,9 +168,19 @@ export function useSchemaChat() {
           body: formData,
         });
 
+        const errData = !res.ok ? await res.json() : null;
+
+        if (res.status === 401) {
+          // 인증 오류 → 채팅 메시지 버블로 표시 (유저 메시지 유지)
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: `🔑 **인증 오류**\n${errData?.error ?? "API 키가 유효하지 않습니다."}`,
+          }]);
+          return;
+        }
+
         if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || "요청에 실패했습니다.");
+          throw new Error(errData?.error || "요청에 실패했습니다.");
         }
 
         const data = await res.json();

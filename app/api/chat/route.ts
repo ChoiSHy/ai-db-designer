@@ -1,12 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { ChatMessage, SchemaJSON } from "@/lib/types";
 import { extractAIResponse } from "@/lib/extractAIResponse";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+import { callLLM, LLMAuthError } from "@/lib/callLLM";
+import { Provider, DEFAULT_PROVIDER_SETTINGS } from "@/lib/providers";
 
 const MAX_HISTORY_TURNS = 10;
 
@@ -17,56 +14,44 @@ export async function POST(req: NextRequest) {
       userInput,
       schema,
       history,
+      provider  = DEFAULT_PROVIDER_SETTINGS.provider,
+      apiKey    = "",
+      model     = DEFAULT_PROVIDER_SETTINGS.model,
     }: {
       userInput: string;
       schema: SchemaJSON;
       history: ChatMessage[];
+      provider?: Provider;
+      apiKey?: string;
+      model?: string;
     } = body;
 
     if (!userInput?.trim()) {
-      return NextResponse.json(
-        { error: "userInput이 필요합니다." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "userInput이 필요합니다." }, { status: 400 });
     }
 
-    // 히스토리 최근 N턴만 유지 (스키마는 히스토리에 포함하지 않음)
     const recentHistory = history.slice(-MAX_HISTORY_TURNS * 2);
 
-    // Claude API 메시지 구성
-    const messages: Anthropic.MessageParam[] = [
+    const messages = [
       ...recentHistory.map((msg) => ({
         role: msg.role as "user" | "assistant",
         content: msg.content,
       })),
       {
-        role: "user",
-        content: `[현재 스키마 상태]
-${JSON.stringify(schema, null, 2)}
-
-[사용자 입력]
-${userInput}`,
+        role: "user" as const,
+        content: `[현재 스키마 상태]\n${JSON.stringify(schema, null, 2)}\n\n[사용자 입력]\n${userInput}`,
       },
     ];
 
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      messages,
-    });
-
-    const rawText =
-      response.content[0].type === "text" ? response.content[0].text : "";
-
-    const parsed = extractAIResponse(rawText, schema);
-
+    const rawText = await callLLM({ provider, apiKey, model, systemPrompt: SYSTEM_PROMPT, messages });
+    const parsed  = extractAIResponse(rawText, schema);
     return NextResponse.json(parsed);
   } catch (error) {
+    if (error instanceof LLMAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
     console.error("API 오류:", error);
-    return NextResponse.json(
-      { error: "AI 응답 처리 중 오류가 발생했습니다." },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "AI 응답 처리 중 오류가 발생했습니다.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
