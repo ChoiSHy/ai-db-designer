@@ -17,44 +17,21 @@ import "@xyflow/react/dist/style.css";
 
 import { SchemaJSON, Table } from "@/lib/types";
 import { SchemaDiff, getTableDiffStatus } from "@/lib/schemaDiff";
+import { applyDagreLayout, NODE_WIDTH, nodeHeight } from "@/lib/erdLayout";
 import { ERDTableNode } from "./ERDTableNode";
 import { ERDEdge } from "./ERDEdge";
 
-// ─── 레이아웃 상수 ───────────────────────────────────────
-const NODE_WIDTH = 230;
-const HEADER_HEIGHT = 48;
-const COLUMN_HEIGHT = 30;
-const H_GAP = 160;
-const V_GAP = 80;
-const COLS_PER_ROW = 3;
-
-function estimateNodeHeight(table: Table): number {
-  return HEADER_HEIGHT + table.columns.length * COLUMN_HEIGHT;
-}
-
-/** 테이블 배열 → React Flow Node 배열 (그리드 자동 배치) */
-function buildNodes(tables: Table[], diff: SchemaDiff | null): Node[] {
-  const rowMaxHeights: number[] = [];
-  tables.forEach((t, i) => {
-    const row = Math.floor(i / COLS_PER_ROW);
-    const h = estimateNodeHeight(t);
-    rowMaxHeights[row] = Math.max(rowMaxHeights[row] ?? 0, h);
-  });
-
-  const rowY: number[] = [];
-  rowMaxHeights.forEach((h, r) => {
-    rowY[r] = r === 0 ? 0 : rowY[r - 1] + rowMaxHeights[r - 1] + V_GAP;
-  });
-
-  return tables.map((table, i) => ({
+/** 테이블 배열 → dagre 레이아웃 적용된 Node 배열 */
+function buildNodes(tables: Table[], diff: SchemaDiff | null, edges: Edge[]): Node[] {
+  const raw: Node[] = tables.map((table) => ({
     id: table.name,
     type: "erdTable",
-    position: {
-      x: (i % COLS_PER_ROW) * (NODE_WIDTH + H_GAP),
-      y: rowY[Math.floor(i / COLS_PER_ROW)],
-    },
+    position: { x: 0, y: 0 },           // dagre가 덮어씀
     data: { table, diffStatus: getTableDiffStatus(diff, table.name) },
+    width:  NODE_WIDTH,
+    height: nodeHeight(table),
   }));
+  return applyDagreLayout(raw, edges, tables);
 }
 
 /** 테이블의 PK 컬럼명 반환 */
@@ -105,8 +82,8 @@ interface ERDViewProps {
 }
 
 export function ERDView({ schema, lastDiff }: ERDViewProps) {
-  const nodes = useMemo(() => buildNodes(schema.tables, lastDiff), [schema, lastDiff]);
   const edges = useMemo(() => buildEdges(schema.tables), [schema]);
+  const nodes = useMemo(() => buildNodes(schema.tables, lastDiff, edges), [schema, lastDiff, edges]);
 
   const flowKey = schema.tables.map((t) => t.name).join("|");
 
