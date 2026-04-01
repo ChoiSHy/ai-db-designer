@@ -38,7 +38,7 @@ cp .env.example .env.local
 # PostgreSQL 연결 문자열
 DATABASE_URL=postgresql://유저명:비밀번호@localhost:5432/db_designer
 
-# AI API 키 (둘 중 하나 이상 필요)
+# AI API 키 (없는 경우 화면에서 입력 가능)
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
